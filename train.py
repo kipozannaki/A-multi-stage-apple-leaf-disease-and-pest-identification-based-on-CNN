@@ -110,12 +110,12 @@ class OptimizedMultiStageCNN(nn.Module):
             nn.ReLU(inplace=True),
             CBAM(32)  # 在浅层过滤掉无效背景像素，加速训练
         )
-        # --- Stage 2: 降采样 (Output: 112x112x64) ---
+        # --- Stage 2: 降采样+中层特征增强 (Output: 112x112x64) ---
         self.stage2 = nn.Sequential(
             DSConv(32, 64, stride=2),
             CBAM(64)
         )
-
+        # --- Stage 3: 中深层特征提取+坐标注意力定位 (Output: 56x56x128) ---
         self.stage3 = nn.Sequential(
             DSConv(64, 128, stride=2),
             CoordAtt(128, 128)  # 锁定目标的几何结构位置

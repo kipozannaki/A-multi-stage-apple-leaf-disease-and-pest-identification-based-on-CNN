@@ -188,10 +188,12 @@ def run_experiment(name, model, train_loader, test_loader):
 
 # ===================== 4. 主流程 =====================
 if __name__ == "__main__":
-    # 字体与样式
+    # ================= 修改开始：解决中文显示方块问题 =================
     sns.set_theme(style="whitegrid")
-    plt.rcParams['font.sans-serif'] = ['SimHei']  # 默认尝试黑体
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'STHeiti', 'DejaVu Sans']
     plt.rcParams['axes.unicode_minus'] = False
+    plt.rc('font', family='sans-serif')
+    # ================= 修改结束 =====================================
 
     # 数据预处理
     transform = transforms.Compose([
