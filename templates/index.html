@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>叶片健康状态分类</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #2e7d32;      /* 自然深绿色 */
+            --secondary-color: #1b5e20;    /* 更深绿色 */
+            --accent-color: #ff9800;       /* 活力橙色 */
+            --success-color: #4caf50;      /* 健康绿 */
+            --warning-color: #ffc107;      /* 警示黄 */
+            --danger-color: #f44336;       /* 危险红 */
+            --light-color: #f9f9f9;        /* 柔和背景 */
+            --dark-color: #1f2a1f;         /* 深色文字 */
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--light-color);
+            color: var(--dark-color);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+        }
+
+        .card {
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: none;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+        }
+
+        .card-header {
+            border-radius: 16px 16px 0 0 !important;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .card-body {
+            padding: 2rem;
+        }
+
+        .upload-area {
+            border: 3px dashed #ced4da;
+            border-radius: 16px;
+            padding: 4rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: white;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-area::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(46, 125, 50, 0.1), transparent);
+            transform: rotate(45deg);
+            transition: all 0.6s ease;
+            opacity: 0;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background-color: #f0f7f0;
+        }
+
+        .upload-area:hover::before {
+            opacity: 1;
+            animation: shimmer 1.5s ease-in-out;
+        }
+
+        @keyframes shimmer {
+            0% {
+                transform: translateX(-100%) rotate(45deg);
+            }
+            100% {
+                transform: translateX(100%) rotate(45deg);
+            }
+        }
+
+        .upload-area.dragover {
+            border-color: var(--primary-color);
+            background-color: rgba(46, 125, 50, 0.05);
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 5rem;
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            transition: transform 0.3s ease;
+        }
+
+        .upload-area:hover .upload-icon {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border: none;
+            border-radius: 50px;
+            padding: 12px 30px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(46, 125, 50, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(46, 125, 50, 0.4);
+        }
+
+        .result-card {
+            display: none;
+            margin-top: 20px;
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .history-card {
+            margin-top: 30px;
+        }
+
+        .history-card .card-header {
+            background: linear-gradient(135deg, #1b5e20, #2e7d32);
+        }
+
+        .history-item {
+            transition: all 0.3s ease;
+            border-radius: 8px;
+        }
+
+        .history-item:hover {
+            background-color: #f0f7f0;
+            transform: translateX(8px);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .spinner {
+            display: none;
+            margin: 30px auto;
+        }
+
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+            border-width: 0.3rem;
+        }
+
+        /* 自定义加载动画颜色，匹配主题色 */
+        .spinner-border.text-primary {
+            border-color: var(--primary-color);
+            border-right-color: transparent;
+        }
+
+        .confidence-bar {
+            height: 12px;
+            border-radius: 6px;
+            background-color: #e9ecef;
+            overflow: hidden;
+            margin: 10px 0;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .confidence-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.8s ease;
+            position: relative;
+        }
+
+        .confidence-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%);
+            animation: shine 2s infinite;
+        }
+
+        @keyframes shine {
+            0% {
+                transform: translateX(-100%);
+            }
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        .confidence-high {
+            background: linear-gradient(90deg, #2e7d32, #4caf50);
+        }
+
+        .confidence-medium {
+            background: linear-gradient(90deg, #ff9800, #ffc107);
+        }
+
+        .confidence-low {
+            background: linear-gradient(90deg, #f44336, #ff8a7a);
+        }
+
+        .img-thumbnail {
+            border-radius: 10px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .img-thumbnail:hover {
+            transform: scale(1.08);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .result-image {
+            border-radius: 12px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+            transition: transform 0.3s ease;
+        }
+
+        .result-image:hover {
+            transform: scale(1.03);
+        }
+
+        .prediction-title {
+            font-size: 1.6rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+            transition: color 0.3s ease;
+        }
+
+        .prediction-title:hover {
+            color: var(--secondary-color);
+        }
+
+        .confidence-text {
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .empty-history {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #6c757d;
+        }
+
+        .empty-history i {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .btn-light {
+            border-radius: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-light:hover {
+            background-color: #e9ecef;
+            transform: translateY(-1px);
+        }
+
+        .table {
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .table thead {
+            background-color: #f8f9fa;
+        }
+
+        .table th {
+            font-weight: 600;
+            color: var(--dark-color);
+        }
+
+        @media (max-width: 768px) {
+            .card-body {
+                padding: 1.5rem;
+            }
+
+            .upload-area {
+                padding: 3rem 2rem;
+            }
+
+            .upload-icon {
+                font-size: 4rem;
+            }
+
+            .card-header {
+                padding: 1.5rem;
+            }
+
+            .prediction-title {
+                font-size: 1.4rem;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .upload-area {
+                padding: 2rem 1rem;
+            }
+
+            .upload-icon {
+                font-size: 3rem;
+            }
+
+            .card-body {
+                padding: 1.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5 mb-5">
+        <div class="row justify-content-center">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h1 class="text-center mb-0">
+                            <i class="fas fa-leaf me-3"></i>叶片健康状态分类系统
+                        </h1>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h2 class="mb-4 text-center">
+                                    <i class="fas fa-cloud-upload-alt me-2"></i>上传叶片图像
+                                </h2>
+                                <form id="upload-form" enctype="multipart/form-data">
+                                    <div class="upload-area" id="upload-area">
+                                        <input type="file" id="file-input" name="file" accept="image/*" style="display: none;">
+                                        <div class="upload-icon">
+                                            <i class="fas fa-image"></i>
+                                        </div>
+                                        <p class="mt-3 h4">点击或拖拽文件到此处上传</p>
+                                        <p class="text-muted">支持 JPG、PNG 等图片格式</p>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary mt-4 w-100">
+                                        <i class="fas fa-arrow-right me-2"></i>开始分析
+                                    </button>
+                                </form>
+                                <div class="spinner" id="spinner">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">分析中...</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="result-card" id="result-card">
+                                    <h2 class="mb-4 text-center">
+                                        <i class="fas fa-chart-line me-2"></i>分析结果
+                                    </h2>
+                                    <div class="card border-0 shadow-sm">
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <img id="uploaded-image" src="" class="img-fluid result-image" alt="上传的图像">
+                                                </div>
+                                                <div class="col-md-6 d-flex flex-column justify-content-center">
+                                                    <h3 class="prediction-title" id="prediction-result"></h3>
+                                                    <p class="confidence-text text-muted">置信度: <span id="confidence-value"></span>%</p>
+                                                    <div class="confidence-bar">
+                                                        <div id="confidence-fill" class="confidence-fill"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="history-card card mt-5">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h2 class="mb-0">
+                                <i class="fas fa-history me-2"></i>历史记录
+                            </h2>
+                            <form action="/clear_history" method="post">
+                                <button type="submit" class="btn btn-light btn-sm">
+                                    <i class="fas fa-trash-alt me-1"></i>清空历史
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {% if history %}
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>序号</th>
+                                            <th>图像</th>
+                                            <th>预测结果</th>
+                                            <th>置信度</th>
+                                            <th>时间</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in history %}
+                                            <tr class="history-item">
+                                                <td>{{ item.id }}</td>
+                                                <td><img src="{{ url_for('static', filename='uploads/' ~ item.filename) }}" class="img-thumbnail" style="width: 80px;"></td>
+                                                <td>{{ item.prediction }}</td>
+                                                <td>
+                                                    <div class="confidence-bar">
+                                                        <div class="confidence-fill {% if item.confidence >= 80 %}confidence-high{% elif item.confidence >= 60 %}confidence-medium{% else %}confidence-low{% endif %}" style="width: {{ item.confidence }}%"></div>
+                                                    </div>
+                                                    {{ item.confidence }}%
+                                                </td>
+                                                <td>{{ item.timestamp }}</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <div class="empty-history">
+                                <i class="fas fa-history"></i>
+                                <p>暂无历史记录</p>
+                                <p class="text-sm">上传图片开始分析，结果将显示在这里</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // 文件上传区域交互
+            $('#upload-area').on('click', function() {
+                $('#file-input').click();
+            });
+
+            // 拖拽功能
+            $('#upload-area').on('dragover', function(e) {
+                e.preventDefault();
+                $(this).addClass('dragover');
+            });
+
+            $('#upload-area').on('dragleave', function(e) {
+                e.preventDefault();
+                $(this).removeClass('dragover');
+            });
+
+            $('#upload-area').on('drop', function(e) {
+                e.preventDefault();
+                $(this).removeClass('dragover');
+                var files = e.originalEvent.dataTransfer.files;
+                if (files.length > 0) {
+                    $('#file-input')[0].files = files;
+                }
+            });
+
+            // 文件选择后预览
+            $('#file-input').on('change', function(e) {
+                if (e.target.files.length > 0) {
+                    var file = e.target.files[0];
+                    var reader = new FileReader();
+                    reader.onload = function(e) {
+                        $('#uploaded-image').attr('src', e.target.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            // 表单提交
+            $('#upload-form').on('submit', function(e) {
+                e.preventDefault();
+                var formData = new FormData(this);
+
+                // 显示加载动画
+                $('#spinner').show();
+
+                $.ajax({
+                    url: '/predict',
+                    type: 'POST',
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    success: function(response) {
+                        // 隐藏加载动画
+                        $('#spinner').hide();
+
+                        // 显示结果
+                        $('#result-card').show();
+                        $('#prediction-result').text(response.prediction);
+                        $('#confidence-value').text(response.confidence);
+
+                        // 设置置信度条
+                        var confidence = response.confidence;
+                        var confidenceFill = $('#confidence-fill');
+                        confidenceFill.css('width', confidence + '%');
+
+                        // 设置置信度条颜色
+                        if (confidence >= 80) {
+                            confidenceFill.removeClass('confidence-medium confidence-low').addClass('confidence-high');
+                        } else if (confidence >= 60) {
+                            confidenceFill.removeClass('confidence-high confidence-low').addClass('confidence-medium');
+                        } else {
+                            confidenceFill.removeClass('confidence-high confidence-medium').addClass('confidence-low');
+                        }
+
+                        // 刷新页面以更新历史记录
+                        setTimeout(function() {
+                            location.reload();
+                        }, 1000);
+                    },
+                    error: function(xhr, status, error) {
+                        // 隐藏加载动画
+                        $('#spinner').hide();
+                        alert('分析失败: ' + error);
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

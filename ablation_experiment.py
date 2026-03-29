@@ -6,26 +6,34 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 from tqdm import tqdm
 
-# ===================== 1. 路径与文件夹配置 =====================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 按照你的要求，创建名为 models 的子文件夹
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-os.makedirs(MODELS_DIR, exist_ok=True)
-
-DATA_DIR = os.path.join(BASE_DIR, "datasets")
+# ===================== 1. 环境与路径配置 =====================
+torch.backends.cudnn.benchmark = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 参数设置
+# 获取当前程序所在文件夹
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ✅ 修正：确保定义了所有必要的路径
+DATA_DIR = os.path.join(BASE_DIR, "datasets")  # 假设你的数据在当前文件夹的 datasets 下
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+SAVE_DIR = os.path.join(BASE_DIR, "ablation_results")
+
+os.makedirs(MODELS_DIR, exist_ok=True)
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+# 实验超参数
 NUM_CLASSES = 4
-BATCH_SIZE = 32
-EPOCHS = 15
+BATCH_SIZE = 64
+EPOCHS = 20
 LEARNING_RATE = 1e-3
 
 
-# ===================== 2. 模型组件 (DSConv, CBAM, CoordAtt) =====================
-# (此处组件代码与之前一致，保持结构完整性)
+# ===================== 2. 模型核心组件 =====================
+
 class DSConv(nn.Module):
     def __init__(self, in_ch, out_ch, stride=1):
         super().__init__()
@@ -42,27 +50,32 @@ class DSConv(nn.Module):
 class CBAM(nn.Module):
     def __init__(self, channels, reduction=16):
         super().__init__()
-        self.ca = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(channels, channels // reduction, 1, bias=False),
-                                nn.ReLU(inplace=True), nn.Conv2d(channels // reduction, channels, 1, bias=False),
-                                nn.Sigmoid())
+        self.ca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, 1, bias=False),
+            nn.Sigmoid()
+        )
         self.sa = nn.Sequential(nn.Conv2d(2, 1, 7, padding=3, bias=False), nn.Sigmoid())
 
     def forward(self, x):
         x = x * self.ca(x)
-        spatial = torch.cat([torch.max(x, 1, keepdim=True)[0], torch.mean(x, 1, keepdim=True)], dim=1)
-        return x * self.sa(spatial)
+        mx, _ = torch.max(x, dim=1, keepdim=True)
+        avg = torch.mean(x, dim=1, keepdim=True)
+        return x * self.sa(torch.cat([mx, avg], dim=1))
 
 
 class CoordAtt(nn.Module):
     def __init__(self, inp, oup, reduction=32):
-        super(CoordAtt, self).__init__()
-        self.pool_h = nn.AdaptiveAvgPool2d((None, 1));
+        super().__init__()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
         mip = max(8, inp // reduction)
         self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
         self.bn1 = nn.BatchNorm2d(mip);
         self.act = nn.ReLU(inplace=True)
-        self.conv_h = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0);
+        self.conv_h = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
         self.conv_w = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
@@ -74,110 +87,178 @@ class CoordAtt(nn.Module):
         return x * self.conv_h(x_h).sigmoid() * self.conv_w(x_w.permute(0, 1, 3, 2)).sigmoid()
 
 
-# ===================== 3. 动态消融模型结构 =====================
-class StageAblationModel(nn.Module):
-    def __init__(self, num_classes, skip_stage=None):
+# ===================== 3. 五个消融模型定义 =====================
+
+class FullModel(nn.Module):
+    def __init__(self, num_classes):
         super().__init__()
-        chs = {0: 3, 1: 32, 2: 64, 3: 128, 4: 256}
-        curr_in = chs[0]
+        self.s1 = nn.Sequential(nn.Conv2d(3, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(inplace=True), CBAM(32))
+        self.s2 = nn.Sequential(DSConv(32, 64, stride=2), CBAM(64))
+        self.s3 = nn.Sequential(DSConv(64, 128, stride=2), CoordAtt(128, 128))
+        self.s4 = nn.Sequential(DSConv(128, 256, stride=2), CoordAtt(256, 256))
+        self.gap = nn.AdaptiveAvgPool2d(1);
+        self.fc = nn.Linear(256, num_classes)
 
-        # 定义阶段 (1:CBAM, 2:CBAM, 3:CoordAtt, 4:CoordAtt)
-        self.stage1 = nn.Sequential(nn.Conv2d(curr_in, chs[1], 3, padding=1), nn.BatchNorm2d(chs[1]),
-                                    nn.ReLU(inplace=True), CBAM(chs[1])) if skip_stage != 1 else nn.Identity()
-        curr_in = chs[1] if skip_stage != 1 else curr_in
-
-        self.stage2 = nn.Sequential(DSConv(curr_in, chs[2], stride=2),
-                                    CBAM(chs[2])) if skip_stage != 2 else nn.Identity()
-        curr_in = chs[2] if skip_stage != 2 else curr_in
-
-        self.stage3 = nn.Sequential(DSConv(curr_in, chs[3], stride=2),
-                                    CoordAtt(chs[3], chs[3])) if skip_stage != 3 else nn.Identity()
-        curr_in = chs[3] if skip_stage != 3 else curr_in
-
-        self.stage4 = nn.Sequential(DSConv(curr_in, chs[4], stride=2),
-                                    CoordAtt(chs[4], chs[4])) if skip_stage != 4 else nn.Identity()
-        curr_in = chs[4] if skip_stage != 4 else curr_in
-
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Sequential(nn.Linear(curr_in, 128), nn.ReLU(inplace=True), nn.Dropout(0.4),
-                                nn.Linear(128, num_classes))
-
-    def forward(self, x):
-        x = self.stage4(self.stage3(self.stage2(self.stage1(x))))
-        return self.fc(self.gap(x).view(x.size(0), -1))
+    def forward(self, x): return self.fc(self.gap(self.s4(self.s3(self.s2(self.s1(x))))).view(x.size(0), -1))
 
 
-# ===================== 4. 核心训练与保存函数 =====================
+class NoS1Model(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.s2 = nn.Sequential(DSConv(3, 64, stride=2), CBAM(64))
+        self.s3 = nn.Sequential(DSConv(64, 128, stride=2), CoordAtt(128, 128))
+        self.s4 = nn.Sequential(DSConv(128, 256, stride=2), CoordAtt(256, 256))
+        self.gap = nn.AdaptiveAvgPool2d(1);
+        self.fc = nn.Linear(256, num_classes)
 
-def run_experiment(name, model, train_loader, test_loader, filename):
-    print(f"\n🚀 正在运行: {name}")
+    def forward(self, x): return self.fc(self.gap(self.s4(self.s3(self.s2(x)))).view(x.size(0), -1))
+
+
+class NoS2Model(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.s1 = nn.Sequential(nn.Conv2d(3, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(inplace=True), CBAM(32))
+        self.s3 = nn.Sequential(DSConv(32, 128, stride=2), CoordAtt(128, 128))
+        self.s4 = nn.Sequential(DSConv(128, 256, stride=2), CoordAtt(256, 256))
+        self.gap = nn.AdaptiveAvgPool2d(1);
+        self.fc = nn.Linear(256, num_classes)
+
+    def forward(self, x): return self.fc(self.gap(self.s4(self.s3(self.s1(x)))).view(x.size(0), -1))
+
+
+class NoS3Model(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.s1 = nn.Sequential(nn.Conv2d(3, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(inplace=True), CBAM(32))
+        self.s2 = nn.Sequential(DSConv(32, 64, stride=2), CBAM(64))
+        self.s4 = nn.Sequential(DSConv(64, 256, stride=2), CoordAtt(256, 256))
+        self.gap = nn.AdaptiveAvgPool2d(1);
+        self.fc = nn.Linear(256, num_classes)
+
+    def forward(self, x): return self.fc(self.gap(self.s4(self.s2(self.s1(x)))).view(x.size(0), -1))
+
+
+class NoS4Model(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.s1 = nn.Sequential(nn.Conv2d(3, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(inplace=True), CBAM(32))
+        self.s2 = nn.Sequential(DSConv(32, 64, stride=2), CBAM(64))
+        self.s3 = nn.Sequential(DSConv(64, 128, stride=2), CoordAtt(128, 128))
+        self.gap = nn.AdaptiveAvgPool2d(1);
+        self.fc = nn.Linear(128, num_classes)
+
+    def forward(self, x): return self.fc(self.gap(self.s3(self.s2(self.s1(x)))).view(x.size(0), -1))
+
+
+# ===================== 4. 实验引擎 =====================
+
+def run_experiment(name, model, train_loader, test_loader, save_filename):
+    print(f"\n🚀 正在运行变体: {name}")
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    criterion = nn.CrossEntropyLoss()
+    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
     best_acc = 0.0
-    # 模型完整路径
-    save_path = os.path.join(MODELS_DIR, filename)
+    history = {'epoch': [], 'loss': [], 'acc': []}
 
     for epoch in range(EPOCHS):
         model.train()
-        for imgs, labels in tqdm(train_loader, desc=f"   Epoch {epoch + 1}", leave=False):
-            imgs, labels = imgs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            criterion(model(imgs), labels).backward()
-            optimizer.step()
+        total_loss = 0
+        loop = tqdm(train_loader, desc=f"   Epoch {epoch + 1}", leave=False)
+        for imgs, labels in loop:
+            imgs, labels = imgs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
+                outputs = model(imgs)
+                loss = criterion(outputs, labels)
+            if scaler:
+                scaler.scale(loss).backward();
+                scaler.step(optimizer);
+                scaler.update()
+            else:
+                loss.backward();
+                optimizer.step()
+            total_loss += loss.item()
 
         model.eval()
         y_true, y_pred = [], []
-        with torch.no_grad():
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
             for imgs, labels in test_loader:
-                outputs = model(imgs.to(device))
+                outputs = model(imgs.to(device, non_blocking=True))
                 y_pred.extend(torch.max(outputs, 1)[1].cpu().numpy())
                 y_true.extend(labels.numpy())
 
         acc = accuracy_score(y_true, y_pred)
         if acc > best_acc:
             best_acc = acc
-            # 仅保存模型权重，结构简洁
-            torch.save(model.state_dict(), save_path)
-            tqdm.write(f"   🌟 已更新最佳模型: {filename} (Acc: {acc * 100:.2f}%)")
+            torch.save(model.state_dict(), os.path.join(MODELS_DIR, save_filename))
+            tqdm.write(f"   🌟 已更新最佳模型: {save_filename} (Acc: {acc * 100:.2f}%)")
 
-    return best_acc
+        history['epoch'].append(epoch + 1)
+        history['loss'].append(total_loss / len(train_loader))
+        history['acc'].append(acc)
+
+    return history, best_acc
 
 
-# ===================== 5. 自动化执行 =====================
+# ===================== 5. 主程序入口 =====================
 
 if __name__ == "__main__":
+    # 图像预处理
     transform = transforms.Compose([
-        transforms.Resize((224, 224)), transforms.ToTensor(),
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-    train_loader = DataLoader(datasets.ImageFolder(os.path.join(DATA_DIR, "train"), transform), BATCH_SIZE, True)
-    test_loader = DataLoader(datasets.ImageFolder(os.path.join(DATA_DIR, "test"), transform), BATCH_SIZE)
+    # 检查数据集路径是否存在
+    train_path = os.path.join(DATA_DIR, "train")
+    test_path = os.path.join(DATA_DIR, "test")
+    if not os.path.exists(train_path):
+        raise FileNotFoundError(f"找不到训练集目录: {train_path}，请确认数据集存放在程序同目录下的 datasets 文件夹内。")
 
-    # 实验配置：名称 -> (跳过阶段, 保存的文件名)
-    experiments = [
-        ("Full Model", None, "best_model_full.pth"),
-        ("Ablation Stage 1", 1, "best_model_remove_stage1.pth"),
-        ("Ablation Stage 2", 2, "best_model_remove_stage2.pth"),
-        ("Ablation Stage 3", 3, "best_model_remove_stage3.pth"),
-        ("Ablation Stage 4", 4, "best_model_remove_stage4.pth")
+    # DataLoader 配置
+    ldr_args = {'num_workers': 2, 'pin_memory': True} if device.type == 'cuda' else {}
+    train_loader = DataLoader(datasets.ImageFolder(train_path, transform), BATCH_SIZE, True, **ldr_args)
+    test_loader = DataLoader(datasets.ImageFolder(test_path, transform), BATCH_SIZE, **ldr_args)
+
+    # 消融实验列表
+    variants = [
+        ("Full Model", FullModel(NUM_CLASSES), "best_model_full.pth"),
+        ("No Stage 1", NoS1Model(NUM_CLASSES), "best_model_no_s1.pth"),
+        ("No Stage 2", NoS2Model(NUM_CLASSES), "best_model_no_s2.pth"),
+        ("No Stage 3", NoS3Model(NUM_CLASSES), "best_model_no_s3.pth"),
+        ("No Stage 4", NoS4Model(NUM_CLASSES), "best_model_no_s4.pth"),
     ]
 
-    results = []
+    final_results = []
+    plt.figure(figsize=(12, 7))
 
-    for name, skip_id, fname in experiments:
-        m = StageAblationModel(NUM_CLASSES, skip_stage=skip_id)
-        final_acc = run_experiment(name, m, train_loader, test_loader, fname)
-        results.append({"实验": name, "准确率": f"{final_acc * 100:.2f}%", "保存位置": fname})
+    for name, model_instance, fname in variants:
+        hist, best_acc = run_experiment(name, model_instance, train_loader, test_loader, fname)
+        final_results.append({"实验变体": name, "最佳准确率 (%)": round(best_acc * 100, 2)})
 
-        # 清理显存
-        del m
+        # 绘图曲线
+        plt.plot(hist['epoch'], [a * 100 for a in hist['acc']], label=f"{name} ({best_acc * 100:.2f}%)")
+
+        # 释放资源
+        del model_instance
         torch.cuda.empty_cache()
 
-    # 打印最终对比
-    print("\n" + "=" * 50)
-    print(pd.DataFrame(results).to_string(index=False))
-    print("=" * 50)
-    print(f"所有模型已存放在: {MODELS_DIR}")
+    # 保存 CSV 统计结果
+    df = pd.DataFrame(final_results)
+    df.to_csv(os.path.join(SAVE_DIR, "ablation_summary.csv"), index=False, encoding='utf_8_sig')
+
+    # 完善图表并保存
+    plt.title("Ablation Study: Accuracy Curves Over Stages", fontsize=14)
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy (%)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(SAVE_DIR, "accuracy_curves.png"), dpi=300)
+
+    print(f"\n✅ 全部消融实验已完成！")
+    print(f"📁 权重文件存放于: {MODELS_DIR}")
+    print(f"📊 统计数据存放于: {SAVE_DIR}")
+    print(df.to_string(index=False))
