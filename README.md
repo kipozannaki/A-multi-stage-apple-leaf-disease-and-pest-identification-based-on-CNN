@@ -58,6 +58,7 @@ Stage 4: DSConv + CoordAtt (256通道, stride=2)
     ↓
 输出 (4类)
 ```
+<img width="416" height="232" alt="image" src="https://github.com/user-attachments/assets/c1347851-999e-4cae-b4b1-a84cfa2ab0db" />
 
 ## 病害类别
 
@@ -160,26 +161,11 @@ python app.py
 
 ## 实验结果
 
-### 消融实验
-
-通过消融实验验证各组件的有效性：
-
-| 模型 | 准确率 | 参数量 |
-|------|--------|--------|
-| 完整模型 | ~95% | ~0.35M |
-| 移除Stage 1 | ~92% | ~0.30M |
-| 移除Stage 2 | ~90% | ~0.28M |
-| 移除Stage 3 | ~88% | ~0.25M |
-
 ### 对比实验
 
-与其他经典模型对比：
+通过对比试验与其他模型对比其性能：
+<img width="1000" height="600" alt="image" src="https://github.com/user-attachments/assets/76946e88-80cf-4f51-a16d-6b9a5618a2c6" />
 
-| 模型 | 准确率 | 参数量 | 推理延迟 |
-|------|--------|--------|----------|
-| OptimizedMultiStageCNN | ~95% | ~0.35M | ~15ms |
-| ResNet18 | ~93% | ~11M | ~25ms |
-| MobileNetV2 | ~91% | ~3.5M | ~20ms |
 
 ## 技术亮点
 
