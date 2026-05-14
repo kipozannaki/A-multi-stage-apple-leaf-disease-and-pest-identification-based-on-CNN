@@ -208,7 +208,7 @@ python app.py
 如有问题或建议，欢迎通过以下方式联系：
 
 - 邮箱：kipozannaki@gmail.com
-- GitHub：https://github.com/yourusername/paperproject
+- GitHub：https://github.com/kipozannaki
 
 ## 致谢
 
